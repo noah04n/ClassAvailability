@@ -45,6 +45,12 @@ class Section:
         # A section is "open" if it has at least one real seat and isn't marked full.
         return self.open_seats > 0 and not self.is_full
 
+    @property
+    def waitlist_available(self) -> bool:
+        # True when there's room to add yourself to the waitlist (ws = remaining
+        # waitlist seats, mirroring os = remaining open seats).
+        return self.waitlist_seats > 0
+
 
 def _anti_bot_params() -> tuple[int, int]:
     t = (int(time.time() * 1000) // 60000) % 1000

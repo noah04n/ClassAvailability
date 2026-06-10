@@ -196,6 +196,51 @@ class Tracker:
                             for e in errs:
                                 self.log(f"Email failed for {ts.course_code} {live.section_no} → {e}")
 
+                # Waitlist edge-trigger (opt-in): notify when a full section has
+                # a spot open on its waitlist. Only meaningful while the section
+                # is full — an open section is better news and handled above.
+                if self.cfg.settings.notify_waitlist:
+                    was_wl_avail = ts.last_waitlist_available
+                    wl_avail = (not is_open) and live.waitlist_available
+                    ts.last_waitlist_available = wl_avail
+                    should_notify_wl = wl_avail and (was_wl_avail is None or was_wl_avail is False)
+                    if should_notify_wl:
+                        recipients = self.cfg.resolve_recipients(ts)
+                        if not recipients:
+                            notify_failures += 1
+                            ts.last_status += " (no recipients configured)"
+                            self.log(f"No recipients for {ts.course_code} {live.section_no}")
+                        else:
+                            subject, body = notifier.format_waitlist_opening(
+                                section_label=f"{live.block_type} {live.section_no}",
+                                course_code=ts.course_code,
+                                course_title=ts.course_title,
+                                term=ts.term,
+                                waitlist_seats=live.waitlist_seats,
+                                waitlist_capacity=live.waitlist_capacity,
+                                note=live.note,
+                            )
+                            sent = []
+                            errs = []
+                            for addr in recipients:
+                                try:
+                                    notifier.send_email(self.cfg.settings, subject, body, recipient=addr)
+                                    sent.append(addr)
+                                except notifier.EmailError as exc:
+                                    errs.append(f"{addr}: {exc}")
+                            if sent:
+                                ts.last_notified_iso = stamp
+                                self.log(
+                                    f"Notified {', '.join(sent)} about {ts.course_code} "
+                                    f"{live.block_type} {live.section_no} — waitlist spot "
+                                    f"({live.waitlist_seats} avail)"
+                                )
+                            if errs:
+                                notify_failures += len(errs)
+                                ts.last_status += f" (waitlist email failed: {'; '.join(errs)})"
+                                for e in errs:
+                                    self.log(f"Email failed for {ts.course_code} {live.section_no} → {e}")
+
         # Persist updated state so a restart doesn't re-fire emails.
         try:
             config.save(self.cfg)

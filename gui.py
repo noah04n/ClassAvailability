@@ -510,6 +510,10 @@ class App:
         ttk.Checkbutton(beh_lf,
                         text="Only email when a section transitions from full to open (no spam while it stays open)",
                         variable=self.var_edge).pack(anchor="w")
+        self.var_notify_waitlist = tk.BooleanVar(value=s.notify_waitlist)
+        ttk.Checkbutton(beh_lf,
+                        text="Also email when a full section has a spot open on its waitlist",
+                        variable=self.var_notify_waitlist).pack(anchor="w")
         self.var_tray = tk.BooleanVar(value=s.minimize_to_tray_on_close)
         ttk.Checkbutton(beh_lf,
                         text="Close button minimizes to system tray (keeps polling in background)",
@@ -1061,6 +1065,7 @@ class App:
         except (tk.TclError, ValueError):
             s.smtp_port = 587
         s.edge_trigger_notifications = bool(self.var_edge.get())
+        s.notify_waitlist = bool(self.var_notify_waitlist.get())
         s.minimize_to_tray_on_close = bool(self.var_tray.get())
         s.start_polling_on_launch = bool(self.var_autostart_poll.get())
         new_theme = self.var_theme.get() if self.var_theme.get() in THEMES else s.theme

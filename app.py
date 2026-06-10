@@ -1,6 +1,6 @@
 """ClassAvailability — McGill VSB Course Availability Tracker.
 
-Main entry point. Wires together config, GUI, polling tracker, and the
+Main application entry point. Wires together config, GUI, polling tracker, and the
 system tray icon. Run via `pythonw app.py` (no console) or `python app.py`
 (with console for debugging).
 """

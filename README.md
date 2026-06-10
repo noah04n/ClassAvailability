@@ -102,6 +102,10 @@ Still in **Settings**:
   - *Only email when a section transitions from full to open* — recommended.
     With this on you get one email when a seat opens, not a flood every poll
     while it stays open.
+  - *Also email when a full section has a spot open on its waitlist* — optional,
+    off by default. When on, you also get a one-time email if a section you're
+    tracking is full but has room on its waitlist, so you can add yourself while
+    you wait for a real seat. See [How notifications work](#how-notifications-work).
   - *Close button minimizes to system tray* — keeps polling in the background
     when you close the window (requires `pystray`).
   - *Start polling automatically when the app launches* — begin checking as
@@ -164,6 +168,13 @@ open, and if it fills again and later reopens, you'll be notified again.
 Each alert email includes the course code and title, the section, the term, the
 number of open seats, any section note, and a link to McGill's registration
 page so you can act quickly.
+
+If *Also email when a full section has a spot open on its waitlist* is enabled,
+you'll additionally get a one-time email when a **full** section has waitlist
+room available (it won't fire for sections that are already open, since an open
+seat is the better outcome and is reported separately). Like open-seat alerts,
+this is edge-triggered: you're notified once when waitlist room appears, not on
+every poll.
 
 Start and stop polling from the **Tracked Courses** tab (**Start polling** /
 **Stop polling**) or from the tray icon menu.

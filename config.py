@@ -1,4 +1,4 @@
-"""JSON-backed config + persistent state.
+"""JSON-backed configuration + persistent state.
 
 Stored under %APPDATA%\\ClassAvailability\\config.json so the file survives
 moving the app folder and isn't accidentally committed.
@@ -116,6 +116,9 @@ class TrackedSection:
     last_status: str = "Not yet checked"
     # When did we last fire an email for this section opening? ISO string.
     last_notified_iso: str | None = None
+    # Edge-trigger state for waitlist notifications: was a waitlist spot
+    # available on the last poll? None = never checked yet.
+    last_waitlist_available: bool | None = None
     # Which profiles (recipients) get notified for this section. Multiple
     # profiles means the opening fires one email per profile, so a single
     # course can ping e.g. a student and an advisor independently. An empty
@@ -138,6 +141,8 @@ class Settings:
     # Only re-notify when a section closes and reopens (edge-trigger).
     # If False, we'd spam every poll while it's open; default True.
     edge_trigger_notifications: bool = True
+    # Also notify when a full section has a spot open on its waitlist.
+    notify_waitlist: bool = False
     minimize_to_tray_on_close: bool = True
     start_polling_on_launch: bool = True
     theme: str = "dark"  # "dark" or "light"

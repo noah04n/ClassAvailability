@@ -84,3 +84,28 @@ def format_opening(section_label: str, course_code: str, course_title: str,
         "Register now at https://horizon.mcgill.ca/pban1/bwskfreg.P_AltPin"
     )
     return subject, "\n".join(body_lines)
+
+
+def format_waitlist_opening(section_label: str, course_code: str, course_title: str,
+                            term: str, waitlist_seats: int, waitlist_capacity: int,
+                            note: str) -> tuple[str, str]:
+    """Build (subject, body) for a 'waitlist spot available' notification."""
+    subject = f"[ClassAvailability] {course_code} {section_label} has a waitlist spot available"
+    seats = (f"{waitlist_seats} of {waitlist_capacity}"
+             if waitlist_capacity else str(waitlist_seats))
+    body_lines = [
+        f"{course_code} — {course_title}",
+        f"Section: {section_label}",
+        f"Term: {term}",
+        f"Waitlist seats available: {seats}",
+        "",
+        "The section is full, but there is room on its waitlist.",
+    ]
+    if note:
+        body_lines.append(f"Note: {note}")
+    body_lines.append("")
+    body_lines.append(
+        "Add yourself to the waitlist at "
+        "https://horizon.mcgill.ca/pban1/bwskfreg.P_AltPin"
+    )
+    return subject, "\n".join(body_lines)
