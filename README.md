@@ -214,6 +214,13 @@ This lives outside the app folder, so you can move or update the app without
 losing your setup. If the file ever becomes corrupted, the app backs it up as
 `config.json.broken` and starts fresh rather than failing to launch.
 
+Your **Gmail App Password is encrypted at rest** using Windows DPAPI (user
+scope) — it is not stored as readable text in `config.json`. Because DPAPI ties
+the encryption to your Windows user account, a `config.json` copied to a
+different account or computer can't decrypt the password, so you'll simply be
+asked to re-enter it there. (Email addresses and other settings are stored in
+the clear, as they aren't secrets.)
+
 ---
 
 ## Troubleshooting

@@ -6,11 +6,74 @@ moving the app folder and isn't accidentally committed.
 
 from __future__ import annotations
 
+import base64
+import ctypes
 import json
 import os
 import tempfile
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
+
+
+# --- Secret-at-rest encryption (Windows DPAPI) ---
+#
+# The Gmail App Password is the only secret we persist. We encrypt it with
+# Windows DPAPI (user scope) so it isn't readable as plaintext in config.json.
+# DPAPI ties the ciphertext to the current Windows user account — no key to
+# manage, and a copied config can't be decrypted by another user/machine.
+# In memory the password stays plaintext (SMTP login needs it); encryption
+# only happens at the JSON boundary.
+
+_DPAPI_PREFIX = "dpapi:"
+
+
+class _DataBlob(ctypes.Structure):
+    _fields_ = [("cbData", ctypes.c_uint32),
+                ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+
+def _dpapi_call(func, data: bytes) -> bytes:
+    blob_in = _DataBlob(
+        len(data),
+        ctypes.cast(ctypes.create_string_buffer(data, len(data)),
+                    ctypes.POINTER(ctypes.c_char)),
+    )
+    blob_out = _DataBlob()
+    if not func(ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)):
+        raise ctypes.WinError()
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+
+
+def _protect_secret(plaintext: str) -> str:
+    """Encrypt a secret for storage. Returns 'dpapi:<base64>' on success.
+    On non-Windows or if DPAPI fails, returns plaintext unchanged — better to
+    keep working than to silently drop the password."""
+    if not plaintext or os.name != "nt":
+        return plaintext
+    try:
+        enc = _dpapi_call(ctypes.windll.crypt32.CryptProtectData, plaintext.encode("utf-8"))
+        return _DPAPI_PREFIX + base64.b64encode(enc).decode("ascii")
+    except Exception:
+        return plaintext
+
+
+def _unprotect_secret(stored: str) -> str:
+    """Inverse of _protect_secret. Values without the prefix are treated as
+    legacy plaintext and returned as-is (they get encrypted on next save).
+    If decryption fails (e.g. config from another user), returns '' so the app
+    prompts for re-entry instead of crashing."""
+    if not stored or not stored.startswith(_DPAPI_PREFIX):
+        return stored
+    if os.name != "nt":
+        return ""
+    try:
+        raw = base64.b64decode(stored[len(_DPAPI_PREFIX):])
+        return _dpapi_call(ctypes.windll.crypt32.CryptUnprotectData, raw).decode("utf-8")
+    except Exception:
+        return ""
 
 
 def config_dir() -> Path:
@@ -90,8 +153,11 @@ class AppConfig:
         self.ensure_default_profile()
 
     def to_json(self) -> str:
+        settings_d = asdict(self.settings)
+        # Encrypt the only secret before it touches disk.
+        settings_d["sender_app_password"] = _protect_secret(self.settings.sender_app_password)
         return json.dumps(
-            {"settings": asdict(self.settings),
+            {"settings": settings_d,
              "tracked": [asdict(t) for t in self.tracked],
              "profiles": [asdict(p) for p in self.profiles]},
             indent=2,
@@ -108,6 +174,8 @@ class AppConfig:
         tracked_fields = {f for f in TrackedSection.__dataclass_fields__}
         profile_fields = {f for f in Profile.__dataclass_fields__}
         s = Settings(**{k: v for k, v in settings_d.items() if k in settings_fields})
+        # Decrypt the stored secret back to plaintext for in-memory use.
+        s.sender_app_password = _unprotect_secret(s.sender_app_password)
         ts = []
         for t in tracked_d:
             kwargs = {k: v for k, v in t.items() if k in tracked_fields}
