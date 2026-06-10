@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 import threading
 import tkinter as tk
+from tkinter import messagebox
 from pathlib import Path
 
 import config
@@ -121,6 +122,26 @@ class TrayController:
             sys.exit(0)
 
 
+def _acquire_single_instance_lock() -> "object | None":
+    """Claim a process-wide lock so only one ClassAvailability runs at a time.
+
+    Returns a handle to keep alive for the process lifetime, or None if another
+    instance already holds the lock. On non-Windows (no kernel32) we don't block
+    startup and just return a placeholder handle."""
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # Named mutex is shared across processes for this user session.
+        handle = kernel32.CreateMutexW(None, False, "ClassAvailability.VSB.Tracker.SingleInstance")
+        ERROR_ALREADY_EXISTS = 183
+        if not handle or kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            return None
+        return handle
+    except Exception:
+        # ctypes/kernel32 unavailable (e.g. non-Windows) — don't block launch.
+        return object()
+
+
 def _enable_dpi_awareness() -> None:
     """Tell Windows we'll handle DPI ourselves so text isn't bitmap-scaled
     (i.e. blurry) on high-DPI displays. Must run before tk.Tk() is created."""
@@ -146,6 +167,22 @@ def _apply_tk_scaling(root: tk.Tk) -> None:
 
 
 def main() -> int:
+    # Refuse to start a second copy — a second poller would double up emails.
+    instance_lock = _acquire_single_instance_lock()
+    if instance_lock is None:
+        try:
+            warn = tk.Tk()
+            warn.withdraw()
+            messagebox.showinfo(
+                "ClassAvailability",
+                "ClassAvailability is already running.\n\n"
+                "Look for its icon in the system tray (near the clock).",
+            )
+            warn.destroy()
+        except Exception:
+            pass
+        return 0
+
     cfg = config.load()
 
     _enable_dpi_awareness()

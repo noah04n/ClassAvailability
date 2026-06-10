@@ -149,6 +149,24 @@ class App:
 
         self._build_status_bar()
 
+        # Size the window to actually fit its content so nothing (e.g. the
+        # Settings tab's Save/Test buttons) spills below the bottom edge on
+        # launch, then center it on screen.
+        self._fit_window_to_content()
+
+    def _fit_window_to_content(self) -> None:
+        """Grow the window to the size its widgets request (the Settings tab is
+        the tallest), clamped to the screen and centered."""
+        self.root.update_idletasks()
+        w = max(self.root.winfo_reqwidth(), 960)
+        h = max(self.root.winfo_reqheight(), 560)
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        w = min(w, int(sw * 0.95))
+        h = min(h, int(sh * 0.90))
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 3)
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
+
     def _apply_theme(self, name: str) -> None:
         """(Re)style every widget for the chosen theme. Safe to call repeatedly
         — first call happens during _build_ui before any widgets exist, later
