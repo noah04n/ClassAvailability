@@ -12,7 +12,6 @@ runs quietly in the system tray and polls VSB on an interval you choose.
   never accidentally run two pollers at once.
 
 Known Limitations:
-- Currently only has Windows support.
 - Does not work for classes that are reserved closed.
 ---
 
