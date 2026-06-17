@@ -12,6 +12,7 @@ runs quietly in the system tray and polls VSB on an interval you choose.
   never accidentally run two pollers at once.
 
 Known Limitations:
+- Currently only has Windows support.
 - Does not work for classes that are reserved closed.
 ---
 
@@ -50,9 +51,12 @@ the tray.
 Install dependencies, set up a Gmail sender, launch the app, and start tracking
 a course — a few minutes end to end.
 
-**Download:** grab the latest release from
-**[github.com/Kenships/ClassAvailability/releases/tag/1.0](https://github.com/Kenships/ClassAvailability/releases/tag/1.0)**,
-then unzip it to a folder of your choice.
+**Install Python 3.10+**:
+Download Python 3.10 or newer from the [Microsoft Store](https://apps.microsoft.com/detail/9PNRBTZXMB4Z?hl=en-us&gl=CA&ocid=pdpshare).
+
+**Download:** Grab the ClassAvailability.zip latest release from
+**[Here](https://github.com/Kenships/ClassAvailability/releases/)**,
+Then unzip it to a folder of your choice.
 
 ### 1. Install
 
