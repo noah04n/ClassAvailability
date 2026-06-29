@@ -40,7 +40,7 @@ def send_email(settings: Settings, subject: str, body: str,
     msg = _build_message(settings.sender_email, to_addr, subject, body)
     ctx = ssl.create_default_context()
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=timeout) as s:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, local_hostname="localhost", timeout=timeout) as s:
             s.ehlo()
             s.starttls(context=ctx)
             s.ehlo()

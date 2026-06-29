@@ -10,21 +10,25 @@ import base64
 import ctypes
 import json
 import os
+import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
 
-# --- Secret-at-rest encryption (Windows DPAPI) ---
-#
-# The Gmail App Password is the only secret we persist. We encrypt it with
-# Windows DPAPI (user scope) so it isn't readable as plaintext in config.json.
-# DPAPI ties the ciphertext to the current Windows user account — no key to
-# manage, and a copied config can't be decrypted by another user/machine.
-# In memory the password stays plaintext (SMTP login needs it); encryption
-# only happens at the JSON boundary.
+"""
+--- Secret-at-rest encryption (Windows DPAPI / macOS Keychain) ---
+
+The Gmail App Password is the only secret we persist. We encrypt it with Windows DPAPI (user scope) on Windows, or store it in the macOS Keychain on macOS, so it isn't readable as plaintext in config.json.
+DPAPI/Keychain ties the secret to the current user account — no key to manage, and a copied config can't be decrypted by another user/machine.
+In memory the password stays plaintext (SMTP login needs it); encryption/keychain storage only happens at the JSON boundary.
+"""
 
 _DPAPI_PREFIX = "dpapi:"
+_KEYCHAIN_PREFIX = "keychain:"
+_SERVICE_NAME = "ClassAvailability"
+_ACCOUNT_NAME = "GmailAppPassword"
 
 
 class _DataBlob(ctypes.Structure):
@@ -47,33 +51,95 @@ def _dpapi_call(func, data: bytes) -> bytes:
         ctypes.windll.kernel32.LocalFree(blob_out.pbData)
 
 
-def _protect_secret(plaintext: str) -> str:
-    """Encrypt a secret for storage. Returns 'dpapi:<base64>' on success.
-    On non-Windows or if DPAPI fails, returns plaintext unchanged — better to
-    keep working than to silently drop the password."""
-    if not plaintext or os.name != "nt":
-        return plaintext
+def _get_keychain_password(service: str, account: str) -> str:
     try:
-        enc = _dpapi_call(ctypes.windll.crypt32.CryptProtectData, plaintext.encode("utf-8"))
-        return _DPAPI_PREFIX + base64.b64encode(enc).decode("ascii")
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout.strip()
     except Exception:
+        return ""
+
+
+def _set_keychain_password(service: str, account: str, password: str) -> bool:
+    try:
+        subprocess.run(
+            ["security", "add-generic-password", "-s", service, "-a", account, "-w", password, "-U", "-A"],
+            capture_output=True,
+            check=True
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _delete_keychain_password(service: str, account: str) -> bool:
+    try:
+        subprocess.run(
+            ["security", "delete-generic-password", "-s", service, "-a", account],
+            capture_output=True,
+            check=True
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _protect_secret(plaintext: str) -> str:
+    """Encrypt a secret for storage. Returns 'dpapi:<base64>' on Windows,
+    'keychain:<service>:<account>' on macOS, and plaintext on other systems/failures."""
+    if not plaintext:
+        if sys.platform == "darwin":
+            _delete_keychain_password(_SERVICE_NAME, _ACCOUNT_NAME)
+        return plaintext
+
+    if os.name == "nt":
+        try:
+            enc = _dpapi_call(ctypes.windll.crypt32.CryptProtectData, plaintext.encode("utf-8"))
+            return _DPAPI_PREFIX + base64.b64encode(enc).decode("ascii")
+        except Exception:
+            return plaintext
+    elif sys.platform == "darwin":
+        try:
+            if _set_keychain_password(_SERVICE_NAME, _ACCOUNT_NAME, plaintext):
+                return f"{_KEYCHAIN_PREFIX}{_SERVICE_NAME}:{_ACCOUNT_NAME}"
+        except Exception:
+            pass
+        return plaintext
+    else:
         return plaintext
 
 
 def _unprotect_secret(stored: str) -> str:
-    """Inverse of _protect_secret. Values without the prefix are treated as
-    legacy plaintext and returned as-is (they get encrypted on next save).
-    If decryption fails (e.g. config from another user), returns '' so the app
-    prompts for re-entry instead of crashing."""
-    if not stored or not stored.startswith(_DPAPI_PREFIX):
+    """Inverse of _protect_secret. Values without a known prefix are treated as
+    legacy plaintext and returned as-is (they get encrypted on next save)."""
+    if not stored:
         return stored
-    if os.name != "nt":
+
+    if stored.startswith(_DPAPI_PREFIX):
+        if os.name != "nt":
+            return ""
+        try:
+            raw = base64.b64decode(stored[len(_DPAPI_PREFIX):])
+            return _dpapi_call(ctypes.windll.crypt32.CryptUnprotectData, raw).decode("utf-8")
+        except Exception:
+            return ""
+    elif stored.startswith(_KEYCHAIN_PREFIX):
+        if sys.platform != "darwin":
+            return ""
+        try:
+            parts = stored[len(_KEYCHAIN_PREFIX):].split(":")
+            if len(parts) == 2:
+                service, account = parts
+                return _get_keychain_password(service, account)
+        except Exception:
+            pass
         return ""
-    try:
-        raw = base64.b64decode(stored[len(_DPAPI_PREFIX):])
-        return _dpapi_call(ctypes.windll.crypt32.CryptUnprotectData, raw).decode("utf-8")
-    except Exception:
-        return ""
+    else:
+        return stored
 
 
 def config_dir() -> Path:
