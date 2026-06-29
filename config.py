@@ -143,6 +143,11 @@ def _unprotect_secret(stored: str) -> str:
 
 
 def config_dir() -> Path:
+    if sys.platform == "darwin":
+        p = Path.home() / "Library" / "Application Support" / "ClassAvailability"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
     base = os.environ.get("APPDATA")
     if not base:
         # Fallback for non-Windows or stripped envs
