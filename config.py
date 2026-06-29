@@ -30,6 +30,10 @@ _KEYCHAIN_PREFIX = "keychain:"
 _SERVICE_NAME = "ClassAvailability"
 _ACCOUNT_NAME = "GmailAppPassword"
 
+# Cache the last known plaintext password to avoid redundant write operations to macOS Keychain
+_last_saved_password: str | None = None
+
+
 
 class _DataBlob(ctypes.Structure):
     _fields_ = [("cbData", ctypes.c_uint32),
@@ -91,9 +95,11 @@ def _delete_keychain_password(service: str, account: str) -> bool:
 def _protect_secret(plaintext: str) -> str:
     """Encrypt a secret for storage. Returns 'dpapi:<base64>' on Windows,
     'keychain:<service>:<account>' on macOS, and plaintext on other systems/failures."""
+    global _last_saved_password
     if not plaintext:
         if sys.platform == "darwin":
             _delete_keychain_password(_SERVICE_NAME, _ACCOUNT_NAME)
+        _last_saved_password = ""
         return plaintext
 
     if os.name == "nt":
@@ -104,7 +110,10 @@ def _protect_secret(plaintext: str) -> str:
             return plaintext
     elif sys.platform == "darwin":
         try:
+            if _last_saved_password is not None and plaintext == _last_saved_password:
+                return f"{_KEYCHAIN_PREFIX}{_SERVICE_NAME}:{_ACCOUNT_NAME}"
             if _set_keychain_password(_SERVICE_NAME, _ACCOUNT_NAME, plaintext):
+                _last_saved_password = plaintext
                 return f"{_KEYCHAIN_PREFIX}{_SERVICE_NAME}:{_ACCOUNT_NAME}"
         except Exception:
             pass
@@ -116,7 +125,9 @@ def _protect_secret(plaintext: str) -> str:
 def _unprotect_secret(stored: str) -> str:
     """Inverse of _protect_secret. Values without a known prefix are treated as
     legacy plaintext and returned as-is (they get encrypted on next save)."""
+    global _last_saved_password
     if not stored:
+        _last_saved_password = ""
         return stored
 
     if stored.startswith(_DPAPI_PREFIX):
@@ -124,7 +135,9 @@ def _unprotect_secret(stored: str) -> str:
             return ""
         try:
             raw = base64.b64decode(stored[len(_DPAPI_PREFIX):])
-            return _dpapi_call(ctypes.windll.crypt32.CryptUnprotectData, raw).decode("utf-8")
+            decrypted = _dpapi_call(ctypes.windll.crypt32.CryptUnprotectData, raw).decode("utf-8")
+            _last_saved_password = decrypted
+            return decrypted
         except Exception:
             return ""
     elif stored.startswith(_KEYCHAIN_PREFIX):
@@ -134,11 +147,14 @@ def _unprotect_secret(stored: str) -> str:
             parts = stored[len(_KEYCHAIN_PREFIX):].split(":")
             if len(parts) == 2:
                 service, account = parts
-                return _get_keychain_password(service, account)
+                decrypted = _get_keychain_password(service, account)
+                _last_saved_password = decrypted
+                return decrypted
         except Exception:
             pass
         return ""
     else:
+        _last_saved_password = stored
         return stored
 
 
