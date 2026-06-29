@@ -8,23 +8,29 @@ system tray icon. Run via `pythonw app.py` (no console) or `python app.py`
 from __future__ import annotations
 
 import sys
+import socket
 import threading
 import tkinter as tk
-from tkinter import messagebox
-from pathlib import Path
 
 import config
 from gui import App
 
-# pystray + PIL are optional — the app works without a tray icon, it just
-# doesn't survive a close-to-background. If they're missing we fall back to a
-# plain "minimize" on close.
+
+# PIL is optional — if missing, we fall back to a plain "minimize" on close.
 try:
-    import pystray
     from PIL import Image, ImageDraw
-    TRAY_AVAILABLE = True
+    PIL_AVAILABLE = True
 except ImportError:
-    TRAY_AVAILABLE = False
+    PIL_AVAILABLE = False
+
+# pystray is optional and disabled on macOS due to threading conflicts.
+TRAY_AVAILABLE = False
+if sys.platform != "darwin" and PIL_AVAILABLE:
+    try:
+        import pystray
+        TRAY_AVAILABLE = True
+    except ImportError:
+        pass
 
 
 def _make_tray_icon_image() -> "Image.Image":
@@ -56,7 +62,7 @@ class TrayController:
 
     def __init__(self, app: App):
         self.app = app
-        self.icon: "pystray.Icon | None" = None
+        self.icon: object | None = None
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -122,24 +128,82 @@ class TrayController:
             sys.exit(0)
 
 
-def _acquire_single_instance_lock() -> "object | None":
-    """Claim a process-wide lock so only one ClassAvailability runs at a time.
+class SingleInstanceLock:
+    """
+    A cross-platform process lock using local loopback socket.
+    Runs a background listener thread to accept requests from secondary instances and triggers a callback (e.g. to restore the window).
+    """
+    def __init__(self, server_socket: "socket.socket | None"):
+        self.server_socket = server_socket
+        self.callback = None
+        self._stop_event = threading.Event()
+        self._thread = None
+        if server_socket:
+            self._thread = threading.Thread(
+                target=self._listen_loop, name="single-instance-listener", daemon=True
+            )
+            self._thread.start()
 
-    Returns a handle to keep alive for the process lifetime, or None if another
-    instance already holds the lock. On non-Windows (no kernel32) we don't block
-    startup and just return a placeholder handle."""
+    def set_callback(self, callback) -> None:
+        self.callback = callback
+
+    def _listen_loop(self) -> None:
+        self.server_socket.settimeout(1.0)
+        while not self._stop_event.is_set():
+            try:
+                conn, _addr = self.server_socket.accept()
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+
+            try:
+                with conn:
+                    data = conn.recv(1024)
+                    if b"SHOW" in data and self.callback:
+                        self.callback()
+            except Exception:
+                pass
+
+    def stop(self) -> None:
+        if self.server_socket:
+            self._stop_event.set()
+            try:
+                self.server_socket.close()
+            except Exception:
+                pass
+
+
+def _acquire_single_instance_lock() -> "SingleInstanceLock | None":
+    """
+    Claim a process-wide lock so only one ClassAvailability runs at a time.
+    If another instance already holds the lock, sends a message to it to focus its window and returns None. Otherwise, starts a listener and returns the lock object.
+    """
+    port = 48329
+    # Try connecting to see if another instance is already listening
     try:
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        # Named mutex is shared across processes for this user session.
-        handle = kernel32.CreateMutexW(None, False, "ClassAvailability.VSB.Tracker.SingleInstance")
-        ERROR_ALREADY_EXISTS = 183
-        if not handle or kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
-            return None
-        return handle
-    except Exception:
-        # ctypes/kernel32 unavailable (e.g. non-Windows) — don't block launch.
-        return object()
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.0)
+        s.connect(("127.0.0.1", port))
+        # Connection succeeded -> another instance is running. Send show command and exit.
+        s.sendall(b"SHOW")
+        s.close()
+        return None
+    except socket.error:
+        # Connection failed -> we are the primary instance
+        pass
+
+    # Bind and listen
+    try:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", port))
+        server.listen(5)
+        return SingleInstanceLock(server)
+    except socket.error:
+        # Binding failed (e.g. port blocked by another program).
+        # Return a dummy lock object so we don't block launching entirely.
+        return SingleInstanceLock(None)
 
 
 def _enable_dpi_awareness() -> None:
@@ -170,17 +234,7 @@ def main() -> int:
     # Refuse to start a second copy — a second poller would double up emails.
     instance_lock = _acquire_single_instance_lock()
     if instance_lock is None:
-        try:
-            warn = tk.Tk()
-            warn.withdraw()
-            messagebox.showinfo(
-                "ClassAvailability",
-                "ClassAvailability is already running.\n\n"
-                "Look for its icon in the system tray (near the clock).",
-            )
-            warn.destroy()
-        except Exception:
-            pass
+        # Silently exit because the primary instance was signaled to restore/focus.
         return 0
 
     cfg = config.load()
@@ -195,6 +249,15 @@ def main() -> int:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ClassAvailability.VSB.Tracker")
     except Exception:
         pass
+
+    # Set up SingleInstanceLock focus callback
+    if instance_lock is not None:
+        def show_window_main_thread() -> None:
+            root.deiconify()
+            root.state("normal")
+            root.lift()
+            root.focus_force()
+        instance_lock.set_callback(lambda: root.after(0, show_window_main_thread))
 
     tray_holder: dict[str, TrayController] = {}
 
@@ -216,7 +279,8 @@ def main() -> int:
         app.tracker.start()
 
     # If pystray isn't installed and minimize_to_tray was on, warn once.
-    if not TRAY_AVAILABLE and cfg.settings.minimize_to_tray_on_close:
+    # Do not warn on macOS where we disable pystray intentionally.
+    if sys.platform != "darwin" and not TRAY_AVAILABLE and cfg.settings.minimize_to_tray_on_close:
         try:
             print(
                 "[ClassAvailability] pystray not installed; closing the window will "
@@ -228,13 +292,15 @@ def main() -> int:
             pass
 
     root.mainloop()
-    # Mainloop returned — make sure tracker/tray are stopped.
+    # Mainloop returned — make sure tracker/tray/lock are stopped.
     app.tracker.stop()
     if tray_controller.icon is not None:
         try:
             tray_controller.icon.stop()
         except Exception:
             pass
+    if instance_lock is not None:
+        instance_lock.stop()
     return 0
 
 
