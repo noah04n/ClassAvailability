@@ -42,6 +42,8 @@ class Tracker:
         self.last_cycle_started_iso: str | None = None
         self.last_cycle_finished_iso: str | None = None
         self.last_cycle_status: str = "Idle"
+        # Heartbeat timer
+        self._last_heartbeat_time: float | None = None
 
     # ---- thread lifecycle ----
 
@@ -51,6 +53,7 @@ class Tracker:
                 return
             self._stop.clear()
             self._wakeup.clear()
+            self._last_heartbeat_time = time.time()
             self._thread = threading.Thread(
                 target=self._run, name="vsb-tracker", daemon=True,
             )
@@ -90,6 +93,11 @@ class Tracker:
                 self.last_cycle_status = "Error: " + traceback.format_exc(limit=1).strip().splitlines()[-1]
                 self.log(f"Unhandled error in poll cycle: {traceback.format_exc()}")
                 self.on_update()
+
+            try:
+                self._check_heartbeat()
+            except Exception as exc:
+                self.log(f"Error checking heartbeat: {exc}")
 
             interval = max(5, int(self.cfg.settings.poll_interval_seconds))
             self._wakeup.clear()
@@ -255,3 +263,31 @@ class Tracker:
         else:
             self.last_cycle_status = f"OK ({successes}) but {notify_failures} email(s) failed"
         self.on_update()
+
+    def _check_heartbeat(self) -> None:
+        if not self.cfg.settings.heartbeat_enabled:
+            self._last_heartbeat_time = None
+            return
+
+        now = time.time()
+        if self._last_heartbeat_time is None:
+            self._last_heartbeat_time = now
+            return
+
+        interval_seconds = max(1, self.cfg.settings.heartbeat_interval_hours) * 3600
+        if now - self._last_heartbeat_time >= interval_seconds:
+            self._last_heartbeat_time = now
+            try:
+                subject = "[ClassAvailability] Status Update: Still Polling"
+                body = (
+                    "This is an automated update to let you know that ClassAvailability is "
+                    "still active and polling VSB.\n\n"
+                    f"Current tracked courses: {len(self.cfg.tracked)} section(s)\n"
+                    f"Check interval: {self.cfg.settings.poll_interval_seconds} seconds\n"
+                    f"Status updates: Every {self.cfg.settings.heartbeat_interval_hours} hour(s)."
+                )
+                self.log("Sending heartbeat status email...")
+                notifier.send_email(self.cfg.settings, subject, body)
+                self.log("Heartbeat status email sent successfully.")
+            except Exception as exc:
+                self.log(f"Failed to send heartbeat status email: {exc}")

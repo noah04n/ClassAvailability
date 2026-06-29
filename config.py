@@ -217,6 +217,10 @@ class Settings:
     minimize_to_tray_on_close: bool = True
     start_polling_on_launch: bool = True
     theme: str = "dark"  # "dark" or "light"
+    # Heartbeat updates
+    heartbeat_enabled: bool = False
+    heartbeat_interval_hours: int = 24
+
 
 
 @dataclass

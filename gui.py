@@ -523,6 +523,19 @@ class App:
                         text="Start polling automatically when the app launches",
                         variable=self.var_autostart_poll).pack(anchor="w")
 
+        # Status Updates (Heartbeat)
+        hb_lf = ttk.LabelFrame(frame, text="Status Updates (Heartbeat)", padding=10)
+        hb_lf.pack(fill=tk.X, pady=(0, 10))
+        self.var_hb_enabled = tk.BooleanVar(value=s.heartbeat_enabled)
+        ttk.Checkbutton(hb_lf,
+                        text="Send an email periodically to confirm the app is still awake and polling",
+                        variable=self.var_hb_enabled).grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(hb_lf, text="Send update email every:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.var_hb_interval = tk.IntVar(value=s.heartbeat_interval_hours)
+        ttk.Spinbox(hb_lf, from_=1, to=168, increment=1, width=6,
+                    textvariable=self.var_hb_interval).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(hb_lf, text="hour(s)").grid(row=1, column=2, sticky="w", padx=(4, 0), pady=(6, 0))
+
         # Buttons
         btn_bar = ttk.Frame(frame)
         btn_bar.pack(fill=tk.X, pady=(4, 0))
@@ -1068,6 +1081,12 @@ class App:
         s.notify_waitlist = bool(self.var_notify_waitlist.get())
         s.minimize_to_tray_on_close = bool(self.var_tray.get())
         s.start_polling_on_launch = bool(self.var_autostart_poll.get())
+        s.heartbeat_enabled = bool(self.var_hb_enabled.get())
+        try:
+            hb_interval = int(self.var_hb_interval.get())
+        except (tk.TclError, ValueError):
+            hb_interval = s.heartbeat_interval_hours
+        s.heartbeat_interval_hours = max(1, hb_interval)
         new_theme = self.var_theme.get() if self.var_theme.get() in THEMES else s.theme
         theme_changed = new_theme != s.theme
         s.theme = new_theme
